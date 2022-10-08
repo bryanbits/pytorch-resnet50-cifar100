@@ -56,7 +56,7 @@ def train(epoch):
             total_samples=len(cifar100_training_loader.dataset)
         ))
 
-        #update training loss for each iteration
+        # update training loss for each iteration
         writer.add_scalar('Train/loss', loss.item(), n_iter)
 
         if epoch <= args.warm:
@@ -106,7 +106,7 @@ def eval_training(epoch=0, tb=True):
     ))
     print()
 
-    #add informations to tensorboard
+    # add informations to tensorboard
     if tb:
         writer.add_scalar('Test/Average loss', test_loss / len(cifar100_test_loader.dataset), epoch)
         writer.add_scalar('Test/Accuracy', correct.float() / len(cifar100_test_loader.dataset), epoch)
@@ -126,7 +126,7 @@ if __name__ == '__main__':
 
     net = get_network(args)
 
-    #data preprocessing:
+    # data loading:
     cifar100_training_loader = get_training_dataloader(
         settings.CIFAR100_TRAIN_MEAN,
         settings.CIFAR100_TRAIN_STD,
@@ -159,12 +159,12 @@ if __name__ == '__main__':
     else:
         checkpoint_path = os.path.join(settings.CHECKPOINT_PATH, args.net, settings.TIME_NOW)
 
-    #use tensorboard
+    # use tensorboard
     if not os.path.exists(settings.LOG_DIR):
         os.mkdir(settings.LOG_DIR)
 
-    #since tensorboard can't overwrite old values
-    #so the only way is to create a new tensorboard log
+    # since tensorboard can't overwrite old values
+    # create a new tensorboard log
     writer = SummaryWriter(log_dir=os.path.join(
             settings.LOG_DIR, args.net, settings.TIME_NOW))
     input_tensor = torch.Tensor(1, 3, 32, 32)
@@ -172,7 +172,7 @@ if __name__ == '__main__':
         input_tensor = input_tensor.cuda()
     writer.add_graph(net, input_tensor)
 
-    #create checkpoint folder to save model
+    # create checkpoint folder to save model
     if not os.path.exists(checkpoint_path):
         os.makedirs(checkpoint_path)
     checkpoint_path = os.path.join(checkpoint_path, '{net}-{epoch}-{type}.pth')
@@ -209,7 +209,7 @@ if __name__ == '__main__':
         train(epoch)
         acc = eval_training(epoch)
 
-        #start to save best performance model after learning rate decay to 0.01
+        # start to save best performance model after learning rate decay to 0.01
         if epoch > settings.MILESTONES[1] and best_acc < acc:
             weights_path = checkpoint_path.format(net=args.net, epoch=epoch, type='best')
             print('saving weights file to {}'.format(weights_path))
