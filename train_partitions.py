@@ -113,6 +113,10 @@ def eval_training(epoch=0, tb=True):
 
     return correct.float() / len(cifar100_test_loader.dataset)
 
+def partition(list_in, n):
+    random.shuffle(list_in)
+    return [list_in[i::n] for i in range(n)]
+
 if __name__ == '__main__': 
 
     # partition cifar100
@@ -166,6 +170,8 @@ if __name__ == '__main__':
     # randomly groups 2 superclasses together to search for neural networks on (creates 10 groups of 10 classes)
     superclasses = super_to_sub.keys()
 
+    all_partitions = partition(superclasses, 10)
+
     if not os.path.exists("groups"):
         os.makedirs("groups")
 
@@ -187,13 +193,119 @@ if __name__ == '__main__':
             test_path = "superclasses/" + superclass + "/test"
             train_path = "superclasses/" + superclass + "/train"
 
-            print(test_path + " into " + test_dest)
-            print(train_path + " into " + train_dest)
-
-
             shutil.copytree(test_path, test_dest)
             shutil.copytree(train_path, train_dest)
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-net', type=str, required=True, help='net type')
+    parser.add_argument('-gpu', action='store_true', default=False, help='use gpu or not')
+    parser.add_argument('-b', type=int, default=128, help='batch size for dataloader')
+    parser.add_argument('-warm', type=int, default=1, help='warm up training phase')
+    parser.add_argument('-lr', type=float, default=0.1, help='initial learning rate')
+    parser.add_argument('-resume', action='store_true', default=False, help='resume training')
+    args = parser.parse_args()
 
-def partition (list_in, n):
-    random.shuffle(list_in)
-    return [list_in[i::n] for i in range(n)]
+    net = get_network(args)
+
+    ten_list = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    # train a net for each partition
+    for i in ten_list:
+        # data loading:
+        cifar100_training_loader = get_training_dataloader(
+            settings.CIFAR100_TRAIN_MEAN,
+            settings.CIFAR100_TRAIN_STD,
+            num_workers=4,
+            batch_size=args.b,
+            shuffle=True, 
+            path='./groups/group_' + str(i) + '/train'
+        )
+
+        cifar100_test_loader = get_test_dataloader(
+            settings.CIFAR100_TRAIN_MEAN,
+            settings.CIFAR100_TRAIN_STD,
+            num_workers=4,
+            batch_size=args.b,
+            shuffle=True, 
+            path='./groups/group_' + str(i) + '/test'
+        )
+
+        loss_function = nn.CrossEntropyLoss()
+        optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+        train_scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=settings.MILESTONES, gamma=0.2) #learning rate decay
+        iter_per_epoch = len(cifar100_training_loader)
+        warmup_scheduler = WarmUpLR(optimizer, iter_per_epoch * args.warm)
+
+        if args.resume:
+            recent_folder = most_recent_folder(os.path.join(settings.CHECKPOINT_PATH, args.net), fmt=settings.DATE_FORMAT)
+            if not recent_folder:
+                raise Exception('no recent folder were found')
+
+            checkpoint_path = os.path.join(settings.CHECKPOINT_PATH, args.net, recent_folder)
+
+        else:
+            checkpoint_path = os.path.join(settings.CHECKPOINT_PATH, args.net, settings.TIME_NOW)
+
+        # use tensorboard
+        if not os.path.exists(settings.LOG_DIR):
+            os.mkdir(settings.LOG_DIR)
+
+        # since tensorboard can't overwrite old values
+        # create a new tensorboard log
+        writer = SummaryWriter(log_dir=os.path.join(
+                settings.LOG_DIR, args.net, settings.TIME_NOW))
+        input_tensor = torch.Tensor(1, 3, 32, 32)
+        if args.gpu:
+            input_tensor = input_tensor.cuda()
+        writer.add_graph(net, input_tensor)
+
+        # create checkpoint folder to save model
+        if not os.path.exists(checkpoint_path):
+            os.makedirs(checkpoint_path)
+        checkpoint_path = os.path.join(checkpoint_path, '{net}-{epoch}-{type}.pth')
+
+        best_acc = 0.0
+        if args.resume:
+            best_weights = best_acc_weights(os.path.join(settings.CHECKPOINT_PATH, args.net, recent_folder))
+            if best_weights:
+                weights_path = os.path.join(settings.CHECKPOINT_PATH, args.net, recent_folder, best_weights)
+                print('found best acc weights file:{}'.format(weights_path))
+                print('load best training file to test acc...')
+                net.load_state_dict(torch.load(weights_path))
+                best_acc = eval_training(tb=False)
+                print('best acc is {:0.2f}'.format(best_acc))
+
+            recent_weights_file = most_recent_weights(os.path.join(settings.CHECKPOINT_PATH, args.net, recent_folder))
+            if not recent_weights_file:
+                raise Exception('no recent weights file were found')
+            weights_path = os.path.join(settings.CHECKPOINT_PATH, args.net, recent_folder, recent_weights_file)
+            print('loading weights file {} to resume training.....'.format(weights_path))
+            net.load_state_dict(torch.load(weights_path))
+
+            resume_epoch = last_epoch(os.path.join(settings.CHECKPOINT_PATH, args.net, recent_folder))
+
+
+        for epoch in range(1, settings.EPOCH + 1):
+            if epoch > args.warm:
+                train_scheduler.step(epoch)
+
+            if args.resume:
+                if epoch <= resume_epoch:
+                    continue
+
+            train(epoch)
+            acc = eval_training(epoch)
+
+            # start to save best performance model after learning rate decay to 0.01
+            if epoch > settings.MILESTONES[1] and best_acc < acc:
+                weights_path = checkpoint_path.format(net=args.net, epoch=epoch, type='best')
+                print('saving weights file to {}'.format(weights_path))
+                torch.save(net.state_dict(), weights_path)
+                best_acc = acc
+                continue
+
+            if not epoch % settings.SAVE_EPOCH:
+                weights_path = checkpoint_path.format(net=args.net, epoch=epoch, type='regular')
+                print('saving weights file to {}'.format(weights_path))
+                torch.save(net.state_dict(), weights_path)
+
+        writer.close()
