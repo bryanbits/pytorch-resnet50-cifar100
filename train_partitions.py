@@ -161,11 +161,13 @@ if __name__ == '__main__':
             shutil.copytree(test_copy, test_dest)
         else:
             shutil.rmtree(test_dest)
+            shutil.copytree(test_copy, test_dest)
         
         if not os.path.exists(train_dest):
             shutil.copytree(train_copy, train_dest)
         else:
             shutil.rmtree(train_dest)
+            shutil.copytree(test_copy, test_dest)
     
     # randomly groups 2 superclasses together to search for neural networks on (creates 10 groups of 10 classes)
     superclasses = super_to_sub.keys()
