@@ -114,8 +114,9 @@ def eval_training(epoch=0, tb=True):
     return correct.float() / len(cifar100_test_loader.dataset)
 
 def partition(list_in, n):
-    random.shuffle(list_in)
-    return [list_in[i::n] for i in range(n)]
+    iterable = list(list_in)
+    random.shuffle(iterable)
+    return [iterable[i::n] for i in range(n)]
 
 if __name__ == '__main__': 
 
